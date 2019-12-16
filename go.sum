@@ -1,8 +1,4 @@
 github.com/brunocannavina/goahrs v0.0.0-20190522180435-8e7dd11b862f h1:MP4UvNHG0RiQccilLHbOtjQQMXNQzIc13l4nUzZQOv0=
 github.com/brunocannavina/goahrs v0.0.0-20190522180435-8e7dd11b862f/go.mod h1:PK6OsI6XMN9eAuAEodlYg7oKOV4oo+GzztftPjvNBhw=
-github.com/ecc1/ble v0.0.0-20180627165003-b31a0c22ab80 h1:YanYt40OxB4kjZ9fWcblzjY+z0O+9hc9I7d6CRnukrs=
-github.com/ecc1/ble v0.0.0-20180627165003-b31a0c22ab80/go.mod h1:oEN7DI7Lk2xRAtSJB+UJ/jx+AAdmdBih2zHB+keqEC0=
-github.com/godbus/dbus v4.1.0+incompatible h1:WqqLRTsQic3apZUK9qC5sGNfXthmPXzUZ7nQPrNITa4=
-github.com/godbus/dbus v4.1.0+incompatible/go.mod h1:/YcGZj5zSblfDWMMoOzV4fas9FZnQYTkDnsGvmh2Grw=
 github.com/tajtiattila/vjoy v0.0.0-20141002142150-b263a01f7f14 h1:jWVozeQzrbgbNuExDfRbzadYwYm2qVXyuGUGy6aWjb8=
 github.com/tajtiattila/vjoy v0.0.0-20141002142150-b263a01f7f14/go.mod h1:kNczauSqoiRyofaTPvzmq98vBh7949UYOhxR7R3RVks=

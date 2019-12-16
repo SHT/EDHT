@@ -2,59 +2,16 @@ package main
 
 import (
 	"bufio"
+	"encoding/hex"
 	"fmt"
 	"github.com/brunocannavina/goahrs"
 	"github.com/tajtiattila/vjoy"
-	"io"
 	"log"
 	"math"
-	"net"
+	"os/exec"
+	"strings"
 	"time"
 )
-
-// Listen sets up a listener and returns the connection and the listener
-func Listen() (net.Conn, net.Listener, error) {
-	// Format address string
-	address := fmt.Sprintf(":%d", 4198)
-	// Establish a listener
-	listener, err := net.Listen("tcp", address)
-	if err != nil {
-		return nil, nil, err
-	}
-	// Accept incoming connections
-	conn, err := listener.Accept()
-	if err != nil {
-		return nil, listener, err
-	}
-	fmt.Printf("Incoming connection from %s\n", conn.RemoteAddr())
-	return conn, listener, nil
-}
-
-// Receive reads the raw bytes from the socket, stores them in a buffer and
-// then returns said buffer
-func Receive(conn net.Conn, reader *bufio.Reader) ([]byte, error) {
-	// Allocate buffer to store the incoming data
-	// One more byte for the mode char
-	buffer := make([]uint8, 20)
-	// Create and store a socket reader on the struct
-	// if it isn't already created
-
-	// Read the data
-	_, err := io.ReadFull(reader, buffer)
-	if err != nil {
-		return nil, err
-	}
-
-	// Return the data
-	return buffer, nil
-}
-
-// DisconnectListener disconnects the listener when an error occurs while
-// receiving data
-func DisconnectListener(listener net.Listener) error {
-	err := listener.Close()
-	return err
-}
 
 // Controller Controller
 type Controller struct {
@@ -63,7 +20,7 @@ type Controller struct {
 	InnerOri   Vector3
 	Gyro       Vector3
 	Acc        Vector3
-	Touch      Vector2
+	TouchPad   Vector2
 	Quaternion goahrs.Quaternion
 }
 
@@ -76,8 +33,8 @@ type Vector3 struct {
 
 // Vector2 sajnda
 type Vector2 struct {
-	X int
-	Y int
+	X float64
+	Y float64
 }
 
 // NormalizeAngle ased
@@ -98,6 +55,20 @@ func MultiplyAngle(angle float64, factor float64) float64 {
 	return angle
 }
 
+func TestAngle(angle float64) float64 {
+	angle -= 180
+	angle *= -7
+	// if angle < -15 {
+	//     angle = -180
+	// } else if angle > 15 {
+	//     angle = 180
+	// } else {
+	//     angle = 0
+	// }
+	angle += 180
+	return angle
+}
+
 // MarshalAngle prepares the angle to be sent to vJoy
 func MarshalAngle(angle float64) float32 {
 	return float32(angle) / 360
@@ -114,6 +85,10 @@ func ParseAngle(val int32) float64 {
 		val = val - 4096
 	}
 	return float64(val) / 4096 * 360
+}
+
+func ParseInt(val int32) float64 {
+	return float64(val) / 256
 }
 
 // GetOrientation asd
@@ -153,7 +128,16 @@ func GetGyroscope(data []byte) Vector3 {
 	}
 }
 
-func getResetButton(data []byte) bool {
+func GetTouchPad(data []byte) Vector2 {
+	x := int32((uint16(data[16])&0x1F)<<3 | (uint16(data[17])&0xE0)>>5)
+	y := int32((uint16(data[17])&0x1F)<<3 | (uint16(data[18])&0xE0)>>5)
+	return Vector2{
+		X: ParseInt(x),
+		Y: ParseInt(y),
+	}
+}
+
+func GetResetButton(data []byte) bool {
 	return (uint16(data[18]) & 0x2) > 0
 }
 
@@ -186,48 +170,70 @@ func main() {
 		d.Axis(vjoy.Slider0),
 		d.Axis(vjoy.Slider1),
 	}
-	// Create a new listener on the specified port
-	for {
-		// Establish connection to the local socket
-		conn, listener, err := Listen()
-		if err != nil {
-			time.Sleep(1 * time.Second)
-			// Attempt to connect every second
-			continue
-		}
-		reader := bufio.NewReader(conn)
-		ctrl.Quaternion.Begin(60)
 
-		// Stop channel is used to signal any running goroutine to stop
-		// rendering and return
-		// Initialize mode character
-		// Receive data indefinitely
-		for {
-			data, err := Receive(conn, reader)
-			if err != nil {
-				// Disconnect the listener
-				err := DisconnectListener(listener)
-				if err != nil {
-					log.Fatalf("Connection could not be closed: %s.\n", err)
-				}
-				// Connection lost, break the loop and try to reconnect
-				break
-			}
-			// Split mode from data
-			// Render the leds based on the given mode and data
-			go Handle(data, d, axes, &ctrl)
-		}
-		// Try to reconnect every second
+	cmd := exec.Command("BLEconsole.exe")
+	// cmd := exec.Command("cmd", "echo", "hello")
+	// cmd.Stdout = os.Stdout
+	// cmd.Stderr = os.Stderr
+
+	w, _ := cmd.StdinPipe()
+	r, _ := cmd.StdoutPipe()
+
+	go func() {
 		time.Sleep(1 * time.Second)
+		w.Write([]byte("format Hex\n"))
+		w.Write([]byte("open Daydream controller\n"))
+		time.Sleep(2 * time.Second)
+		w.Write([]byte("subs 65109/Custom Characteristic: 00000001-1000-1000-8000-00805f9b34fb\n"))
+	}()
+	go func() {
+		memory := make([]byte, 59)
+		cnt := 0
+		started := false
+		s := bufio.NewScanner(r)
+		s.Split(bufio.ScanBytes)
+		for s.Scan() {
+			if cnt == 29 && !started {
+				cnt = 0
+				started = true
+				ctrl.Quaternion.Begin(60)
+			}
+			if started && cnt < 59 {
+				b := s.Bytes()
+				memory[cnt] = b[0]
+				if cnt == 58 {
+					str := strings.Replace(string(memory), " ", "", -1)
+					enc, err := hex.DecodeString(str)
+					if err != nil {
+						panic(err)
+					}
+					// fmt.Println(string(enc))
+					go Handle(enc, d, axes, &ctrl)
+
+				}
+			}
+			if cnt == 59 {
+				cnt = 0
+			}
+			cnt++
+		}
+		fmt.Println("EOF")
+	}()
+	if err := cmd.Start(); err != nil {
+		log.Fatal(err)
+	}
+	if err := cmd.Wait(); err != nil {
+		log.Fatal(err)
 	}
 }
 
 func Handle(data []byte, d *vjoy.Device, axes []*vjoy.Axis, ctrl *Controller) {
 
-	reset := getResetButton(data)
+	reset := GetResetButton(data)
 	ctrl.InnerOri = GetOrientation(data)
 	ctrl.Acc = GetAccelerometer(data)
 	ctrl.Gyro = GetGyroscope(data)
+	ctrl.TouchPad = GetTouchPad(data)
 
 	gyroX, gyroY, gyroZ := float64(ctrl.Gyro.X)/(65/(2*math.Pi)), float64(ctrl.Gyro.Y)/(65/(2*math.Pi)), float64(ctrl.Gyro.Z)/(65/(2*math.Pi))
 	accX, accY, accZ := float64(ctrl.Acc.X), float64(ctrl.Acc.Y), float64(ctrl.Acc.Z)
@@ -246,12 +252,12 @@ func Handle(data []byte, d *vjoy.Device, axes []*vjoy.Axis, ctrl *Controller) {
 	}
 
 	x := OffsetAngle(ctrl.InnerOri.X, ctrl.Offset.X)
-	x = MultiplyAngle(x, 2)
+	x = MultiplyAngle(x, -2)
+
 	y := OffsetAngle(roll, ctrl.Offset.Y)
 	y = MultiplyAngle(y, 2)
 
 	axes[0].Setuf(MarshalAngle(x))
-
 	axes[1].Setuf(MarshalAngle(y))
 
 	_ = d.Update()
