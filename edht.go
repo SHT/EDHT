@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+	"io"
 )
 
 // Controller Controller
@@ -177,14 +178,19 @@ func main() {
 	// cmd.Stderr = os.Stderr
 
 	w, _ := cmd.StdinPipe()
-	r, _ := cmd.StdoutPipe()
+	o, _ := cmd.StdoutPipe()
+	e, _ := cmd.StderrPipe()
+
+	r := io.MultiReader(o, e)
+
 
 	go func() {
 		time.Sleep(1 * time.Second)
 		w.Write([]byte("format Hex\n"))
-		w.Write([]byte("open Daydream controller\n"))
 		time.Sleep(2 * time.Second)
-		w.Write([]byte("subs 65109/Custom Characteristic: 00000001-1000-1000-8000-00805f9b34fb\n"))
+		w.Write([]byte("open Daydream controller\n"))
+		// time.Sleep(2 * time.Second)
+		// w.Write([]byte("subs 65109/Custom Characteristic: 00000001-1000-1000-8000-00805f9b34fb\n"))
 	}()
 	go func() {
 		memory := make([]byte, 59)
@@ -193,31 +199,68 @@ func main() {
 		s := bufio.NewScanner(r)
 		s.Split(bufio.ScanBytes)
 		for s.Scan() {
-			if cnt == 29 && !started {
-				cnt = 0
-				started = true
-				ctrl.Quaternion.Begin(60)
-			}
-			if started && cnt < 59 {
-				b := s.Bytes()
-				memory[cnt] = b[0]
-				if cnt == 58 {
-					str := strings.Replace(string(memory), " ", "", -1)
-					enc, err := hex.DecodeString(str)
-					if err != nil {
-						panic(err)
-					}
-					// fmt.Println(string(enc))
-					go Handle(enc, d, axes, &ctrl)
+			// fmt.Print(string(s.Bytes()))
+			if cnt < 59 {
+				if !started {
+					b := s.Bytes()
+					if string(b) != "\n" && string(b) != "\r"  {
+						memory[cnt] = b[0]
+						cnt++
+					} else {
+						if cnt != 0 {
+							str := string(memory)
+							if strings.HasPrefix(str, "Current display format: Hex") {
+								fmt.Println("Attempting to connect...")
+								w.Write([]byte("open Daydream controller\n"))
+								time.Sleep(1 * time.Second)
+								w.Write([]byte("print %name\\n\n"))
+							} else if strings.HasPrefix(str, "Device Daydream controller is unreachable.") {
+								fmt.Println("Device not found. Searching...")
+								w.Write([]byte("open Daydream controller\n"))
+								time.Sleep(1 * time.Second)
+								w.Write([]byte("print %name\\n\n"))
+							} else if strings.HasPrefix(str, "Can't connect to Daydream controller.") {
+								fmt.Println("Couldn't connect. Retrying...")
+								w.Write([]byte("open Daydream controller\n"))
+								time.Sleep(1 * time.Second)
+								w.Write([]byte("print %name\\n\n"))
+							} else if strings.HasPrefix(str, "Connecting to Daydream controller.") {
+								fmt.Println("Connecting...")
+							} else if strings.HasPrefix(str, "Daydream controller") {
+								fmt.Println("Connected!")
+								time.Sleep(1 * time.Second)
+								w.Write([]byte("subs 65109/Custom Characteristic: 00000001-1000-1000-8000-00805f9b34fb\n"))
+								started = true
+								ctrl.Quaternion.Begin(60)
+							} else {
+								fmt.Printf("Unknown command: %s", string(memory))
+							}
+							memory = make([]byte, 59)
+							cnt = 0
 
+						}
+					}
+				} else {
+					b := s.Bytes()
+					memory[cnt] = b[0]
+					cnt++
+					if cnt == 59 {
+						str := strings.Replace(string(memory), " ", "", -1)
+						enc, err := hex.DecodeString(str)
+						if err != nil {
+							panic(err)
+						}
+						go Handle(enc, d, axes, &ctrl)
+					}
 				}
 			}
-			if cnt == 59 {
+			if cnt >= 59 {
+				memory = make([]byte, 59)
 				cnt = 0
 			}
-			cnt++
 		}
-		fmt.Println("EOF")
+		fmt.Println("Reached EOF. Exiting.")
+		return
 	}()
 	if err := cmd.Start(); err != nil {
 		log.Fatal(err)
@@ -252,10 +295,10 @@ func Handle(data []byte, d *vjoy.Device, axes []*vjoy.Axis, ctrl *Controller) {
 	}
 
 	x := OffsetAngle(ctrl.InnerOri.X, ctrl.Offset.X)
-	x = MultiplyAngle(x, -2)
+	x = MultiplyAngle(x, -1)
 
 	y := OffsetAngle(roll, ctrl.Offset.Y)
-	y = MultiplyAngle(y, 2)
+	y = MultiplyAngle(y, 1)
 
 	axes[0].Setuf(MarshalAngle(x))
 	axes[1].Setuf(MarshalAngle(y))
